@@ -29,38 +29,23 @@ st.set_page_config(page_title="Adaptive Learning Assistant", layout="wide")
 st.title("🧠 Adaptive Learning Assistant")
 st.write("Welcome to your personalized learning journey! I will teach you a topic, quiz you, and adapt to your progress.")
 
-# --- Groq API Key Setup ---
-# Get Groq API key from environment variables or Streamlit secrets
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    st.warning("GROQ_API_KEY environment variable not found. Please set it or enter it below.")
-    GROQ_API_KEY = st.text_input("Enter your Groq API Key:", type="password", key="groq_api_key_input")
-    if GROQ_API_KEY:
-        os.environ["GROQ_API_KEY"] = GROQ_API_KEY
-    else:
-        st.stop()
-
-
-# --- Initialize LLM and Embedding Model ---
+# --- Initialize LLM and Embedding Model and ChromaDB (Cached) ---
 @st.cache_resource
-def initialize_models(api_key):
+def load_models():
+    # Initialize LLM
     llm = ChatGroq(
         model="llama-3.3-70b-versatile", # Or any other suitable model
         temperature=0.3,
         max_tokens=1024,
-        groq_api_key=api_key
+        groq_api_key=st.secrets["GROQ_API_KEY"]
     )
+
+    # Initialize embedding model
     embedding_model = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
-    return llm, embedding_model
 
-llm, embedding_model = initialize_models(GROQ_API_KEY)
-
-
-# --- Data Loading and Processing (Cached) ---
-@st.cache_resource
-def load_and_process_data():
+    # Define curriculum
     curriculum = {
         "Python (programming language)":      ("Python", "beginner"),
         "Function (computer programming)":    ("Python", "intermediate"),
@@ -72,6 +57,7 @@ def load_and_process_data():
         "Graph (abstract data type)":         ("Data Structures", "advanced"),
     }
 
+    # Load raw documents from Wikipedia
     wiki = wikipediaapi.Wikipedia(
         language='en',
         user_agent='AdaptiveLearningBot/1.0'
@@ -90,6 +76,7 @@ def load_and_process_data():
                 "source_url": page.fullurl
             })
 
+    # Convert to LangChain Documents
     documents = []
     for raw in raw_documents:
         doc = Document(
@@ -104,6 +91,7 @@ def load_and_process_data():
         )
         documents.append(doc)
 
+    # Split documents into chunks
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
         chunk_overlap=50,
@@ -111,6 +99,7 @@ def load_and_process_data():
     )
     chunked_docs = text_splitter.split_documents(documents)
 
+    # Initialize ChromaDB vectorstore
     CHROMA_PATH = "./chroma_edtech_db"
     vectorstore = Chroma.from_documents(
         documents=chunked_docs,
@@ -124,11 +113,17 @@ def load_and_process_data():
         search_type="similarity",
         search_kwargs={"k": 3}
     )
-    return retriever, vectorstore, curriculum, chunked_docs
 
-retriever, vectorstore, curriculum, chunked_docs = load_and_process_data()
+    return llm, retriever, vectorstore, curriculum
 
-# --- Knowledge Base (Static) ---
+# Check for Groq API key in secrets
+if "GROQ_API_KEY" not in st.secrets:
+    st.error("GROQ_API_KEY not found in Streamlit secrets. Please add it to run the app.")
+    st.stop()
+
+llm, retriever, vectorstore, curriculum = load_models()
+
+# --- Knowledge Base (Static) --- (This remains global as it's separate from data loading)
 knowledge_base = {
     "quiz_questions": {
         "beginner": [
@@ -269,7 +264,7 @@ def evaluate_answer(student_answer: str, expected_answer: str, topic: str) -> st
         return json.dumps({"passed": True, "score": 100, "feedback": "Excellent! Your answer is spot on."})
 
     eval_prompt = f"""You are an answer evaluator. Compare the student's answer to the expected answer for the topic '{topic}'.
-    Focus on semantic correctness and completeness.\n\nTopic: {topic}\nExpected Answer: {expected_answer}\nStudent Answer: {student_answer}\n\nYou MUST respond with ONLY a JSON object, no explanation, no markdown, no backticks.\nExample format: {{\"passed\": true, \"score\": 85, \"feedback\": \"Good understanding shown.\"}}\n\nRespond now with JSON only:"""
+    Focus on semantic correctness and completeness.\n\nTopic: {topic}\nExpected Answer: {expected_answer}\nStudent Answer: {student_answer}\n\nYou MUST respond with ONLY a JSON object, no explanation, no markdown, no backticks.\nExample format: {{"passed": true, "score": 85, "feedback": "Good understanding shown."}}\n\nRespond now with JSON only:"""
 
     response = llm.invoke(eval_prompt)
     raw = response.content.strip()
@@ -446,6 +441,14 @@ with st.sidebar:
         key="subject_select"
     )
 
+    # Filter topics based on selected subject
+    available_topics_for_subject_raw = [topic_name for topic_name, (sub, _) in curriculum.items() if sub == st.session_state.subject_select_value]
+    if not available_topics_for_subject_raw:
+        available_topics_for_subject = [list(curriculum.keys())[0]] # Fallback to a generic topic if no topics for subject
+    else:
+        # Sort topics alphabetically
+        available_topics_for_subject = sorted(available_topics_for_subject_raw)
+
     st.session_state.difficulty_select_value = st.selectbox(
         "Your Level:",
         options=["beginner", "intermediate", "advanced"],
@@ -453,29 +456,26 @@ with st.sidebar:
         key="difficulty_select"
     )
 
-    # Filter topics based on selected subject
-    available_topics_for_subject = [topic_name for topic_name, (sub, _) in curriculum.items() if sub == st.session_state.subject_select_value]
-    if not available_topics_for_subject:
-        available_topics_for_subject = [list(curriculum.keys())[0]] # Fallback to a generic topic if no topics for subject
-
     # Determine the default topic for the topic selectbox based on subject AND difficulty
-    # If the current topic_select_value is no longer valid for the selected subject,
-    # or if it's the very first session, try to find a better default.
+    # If the current topic_select_value is no longer valid for the selected subject, or if it's the very first session, try to find a better default.
     if st.session_state.topic_select_value not in available_topics_for_subject:
         found_topic = None
         for topic_name, (sub, diff) in curriculum.items():
             if sub == st.session_state.subject_select_value and diff == st.session_state.difficulty_select_value:
                 found_topic = topic_name
                 break
-        
+
         if found_topic:
             st.session_state.topic_select_value = found_topic
-        else:
-            # Fallback to the first available topic for the subject
+        elif available_topics_for_subject: # Fallback to the first available topic for the subject if no difficulty match
             st.session_state.topic_select_value = available_topics_for_subject[0]
 
+    # Ensure the topic_select_value is one of the options for the current subject before finding its index
+    if st.session_state.topic_select_value not in available_topics_for_subject and available_topics_for_subject:
+        st.session_state.topic_select_value = available_topics_for_subject[0]
+
     # Now set the index based on the (potentially updated) topic_select_value
-    current_topic_idx = available_topics_for_subject.index(st.session_state.topic_select_value)
+    current_topic_idx = available_topics_for_subject.index(st.session_state.topic_select_value) if available_topics_for_subject else 0
 
     st.session_state.topic_select_value = st.selectbox(
         "Topic:",
@@ -617,3 +617,4 @@ elif st.session_state.current_phase == "summary_display":
         st.session_state.current_phase = "setup"
         st.session_state.langgraph_state = None
         st.rerun()
+
