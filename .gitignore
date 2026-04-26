@@ -1,0 +1,8 @@
+# Never upload these to GitHub
+.streamlit/secrets.toml
+chroma_edtech_db/
+__pycache__/
+*.pyc
+.env
+*.zip
+.DS_Store
