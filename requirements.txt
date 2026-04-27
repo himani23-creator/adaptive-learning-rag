@@ -1,10 +1,12 @@
 streamlit
 langchain
-langgraph
 langchain-groq
 langchain-community
-chromadb
+langchain-text-splitters
+langchain-core
+chromadb==0.4.24
 sentence-transformers
 groq
 wikipedia-api
 pypdf2
+protobuf==3.20.3

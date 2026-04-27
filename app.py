@@ -20,7 +20,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 
 import wikipediaapi
-import chromadb # Import chromadb for explicit client usage if needed
+
 import warnings
 warnings.filterwarnings('ignore')
 
