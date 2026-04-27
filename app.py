@@ -8,7 +8,7 @@ import random # Added for random.choice
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import FakeEmbeddings
 from langchain.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -41,9 +41,8 @@ def load_models():
     )
 
     # Initialize embedding model
-    embedding_model = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+
+    embedding_model = FakeEmbeddings(size=384)
 
     # Define curriculum
     curriculum = {

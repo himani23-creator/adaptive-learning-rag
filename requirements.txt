@@ -5,7 +5,6 @@ langchain-community
 langchain-text-splitters
 langchain-core
 chromadb==0.4.24
-sentence-transformers
 groq
 wikipedia-api
 pypdf2
